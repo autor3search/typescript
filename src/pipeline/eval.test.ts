@@ -107,11 +107,41 @@ const constMeasureOne = async (): Promise<number> => 1
  * occasionally flip a real, large effect below significance. At 10 the
  * floor is 2/C(20,10) ~= 1.08e-5, a ~4600x margin (this is also exactly
  * what the real end-to-end CLI run in task-19-report.md measured).
+ *
+ * `count` only guards ONE direction, though: it protects a real, large
+ * effect from being pushed below significance, and does nothing about noise
+ * pushing a NO-OP above it. That is what STABLE_MEASURE_PATCHES below is
+ * for -- see its note.
  */
 const FAST_MEASURE_PATCHES: Record<string, string> = {
   count: '10',
   benchtime: JSON.stringify('5ms'),
   warmup: JSON.stringify('0ms'),
+}
+
+/**
+ * For the one test that asserts WHICH side of the significance line a real
+ * measurement fell on. Everything else either asserts a huge effect (the
+ * fixture's O(n^2) -> O(n) fix, which no amount of scheduler noise hides) or
+ * injects a deterministic `measureOne`, so only this case pays the cost.
+ *
+ * See the note above on why the defaults cannot hold it: a 5ms benchmark with
+ * no warmup measures mostly scheduler, and the 1%..5% band between the
+ * improvement floor and the regression ceiling is narrower than that noise.
+ *
+ * Both halves are needed. Widening the thresholds alone still flaked; the
+ * longer benchtime and a real warmup attack the variance itself, which is
+ * the actual cause. Together they ran 8 of 8 with eight busy cores alongside,
+ * where the defaults managed 7 of 8 and failed exactly as CI did. Scoping it
+ * to this one test keeps the bill at about 2s on the whole suite
+ * (54.2s -> 56.0s), rather than the ~2.5x a file-wide change would cost.
+ */
+const STABLE_MEASURE_PATCHES: Record<string, string> = {
+  ...FAST_MEASURE_PATCHES,
+  benchtime: JSON.stringify('50ms'),
+  warmup: JSON.stringify('10ms'),
+  min_effect_pct: '25',
+  max_regress_pct: '25',
 }
 
 /**
@@ -768,7 +798,7 @@ describe('runEval: end to end against the real demo fixture', () => {
   // fails, because the no-op is then compared against the original, slow
   // baseline instead of the just-kept fast one.
   it('DISCARDs a comment-only no-op commit', async () => {
-    const { root, ctx } = await setup(FAST_MEASURE_PATCHES)
+    const { root, ctx } = await setup(STABLE_MEASURE_PATCHES)
     await applyRealFix(root)
 
     const keepOutcome = await runEval({ ctx, tag: TAG, description: 'push instead of concat' })
