@@ -7,6 +7,7 @@ import { lockPath } from '../state/lock.js'
 import { inferTagFromBranch } from '../state/runnaming.js'
 import { EXIT_CODES } from '../verdict/verdict.js'
 import type { RunCtx } from './runctx.js'
+import { expandSingleDashFlags } from './flags.js'
 
 /**
  * SIGTERM's default disposition kills node immediately -- once ANY listener
@@ -141,14 +142,15 @@ export async function cmdEval(ctx: RunCtx, argv: readonly string[]): Promise<num
   let json: boolean
   let desc: string
   try {
-    const normalized = argv.map((a) => (/^-[A-Za-z][A-Za-z-]+$/.test(a) ? `-${a}` : a))
+    const options = {
+      tag: { type: 'string' },
+      json: { type: 'boolean', default: false },
+      desc: { type: 'string', default: '' },
+    } as const
+    const normalized = expandSingleDashFlags(argv, options)
     const { values } = parseArgs({
       args: normalized,
-      options: {
-        tag: { type: 'string' },
-        json: { type: 'boolean', default: false },
-        desc: { type: 'string', default: '' },
-      },
+      options,
       strict: true,
       allowPositionals: false,
     })

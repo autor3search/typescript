@@ -7,6 +7,7 @@ import { readEvalLock } from '../state/lock.js'
 import { inferTagFromBranch } from '../state/runnaming.js'
 import { clearStop, requestStop } from '../state/stop.js'
 import type { RunCtx } from './runctx.js'
+import { expandSingleDashFlags } from './flags.js'
 
 function fail(message: string): number {
   process.stderr.write(`error: ${message}\n`)
@@ -61,14 +62,15 @@ export async function cmdStop(ctx: RunCtx, argv: readonly string[]): Promise<num
   let clear: boolean
   let force: boolean
   try {
-    const normalized = argv.map((a) => (/^-[A-Za-z][A-Za-z-]+$/.test(a) ? `-${a}` : a))
+    const options = {
+      tag: { type: 'string' },
+      clear: { type: 'boolean', default: false },
+      force: { type: 'boolean', default: false },
+    } as const
+    const normalized = expandSingleDashFlags(argv, options)
     const { values } = parseArgs({
       args: normalized,
-      options: {
-        tag: { type: 'string' },
-        clear: { type: 'boolean', default: false },
-        force: { type: 'boolean', default: false },
-      },
+      options,
       strict: true,
       allowPositionals: false,
     })

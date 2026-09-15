@@ -8,7 +8,7 @@ import { headCommit } from '../gitx/git.js'
 import { RESULTS_PATH } from '../results/results.js'
 import { ok, run } from '../runner/exec.js'
 import { STATE_HOME_ENV, runDir } from '../state/home.js'
-import { lockPath } from '../state/lock.js'
+import { acquireEvalLock, lockPath } from '../state/lock.js'
 import { readStop } from '../state/stop.js'
 import { makeDemoRepo } from '../testutil/demo.js'
 import { cmdBaseline } from './cmd-baseline.js'
@@ -287,5 +287,75 @@ describe('cmdStop', () => {
       exited,
       new Promise((_resolve, reject) => setTimeout(() => reject(new Error('child did not exit')), 5_000)),
     ])
+  })
+
+  it('-force reaches a real eval handler on POSIX, and is reclaimable on Windows either way', async () => {
+    // README's failure table promises that killing a measuring `eval` leaves
+    // "the eval lock released before the process exits". That is true only
+    // where a signal can cross processes. On Windows killGroup uses
+    // `taskkill /T /F`, which terminates outright: the handler never runs, so
+    // the lock outlives the process and is reclaimed later by the dead-pid
+    // check in acquireEvalLock instead.
+    //
+    // The child here installs a SIGTERM handler that records having run, which
+    // is what a real `eval` uses to release its lock. Asserting per platform
+    // keeps the difference visible rather than letting an in-process
+    // `process.emit('SIGTERM')` imply parity that does not exist.
+    const { root, ctx } = await setup()
+    const dir = runDir(root, TAG)
+    await mkdir(dir, { recursive: true })
+    const ran = path.join(dir, 'handler-ran')
+    const ready = path.join(dir, 'handler-ready')
+    // The child announces itself only AFTER registering the handler. Signalling
+    // before that lands on SIGTERM's default disposition and kills it outright,
+    // which looks exactly like the Windows behaviour under test -- the race
+    // would have made this test pass on POSIX for entirely the wrong reason.
+    const script =
+      `const fs = require('fs');` +
+      `process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(ran)}, 'x'); process.exit(143) });` +
+      `fs.writeFileSync(${JSON.stringify(ready)}, 'x');` +
+      `setInterval(() => {}, 1000)`
+    const child = spawn(process.execPath, ['-e', script], { detached: true, stdio: 'ignore' })
+    const childPid = child.pid
+    expect(childPid).toBeDefined()
+    const readyBy = Date.now() + 10_000
+    for (;;) {
+      const up = await access(ready).then(
+        () => true,
+        () => false,
+      )
+      if (up) break
+      if (Date.now() > readyBy) throw new Error('child never registered its SIGTERM handler')
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    await writeFile(lockPath(dir), JSON.stringify({ pid: childPid, startedAt: new Date().toISOString() }), {
+      flag: 'wx',
+    })
+
+    const exitCode = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+    captureOutput()
+    expect(await cmdStop(ctx, ['-tag', TAG, '-force'])).toBe(0)
+    const code = await Promise.race([
+      exitCode,
+      new Promise<never>((_r, reject) => setTimeout(() => reject(new Error('child did not exit')), 5_000)),
+    ])
+
+    const handlerRan = await access(ran).then(
+      () => true,
+      () => false,
+    )
+    if (process.platform === 'win32') {
+      expect(handlerRan, 'taskkill cannot run a SIGTERM handler').toBe(false)
+      expect(code).not.toBe(143)
+    } else {
+      expect(handlerRan, 'SIGTERM must reach the handler that releases the lock').toBe(true)
+      expect(code).toBe(143)
+    }
+
+    // Whichever route killed it, the next eval must be able to claim the run.
+    // On POSIX the handler already removed the lock; on Windows it is still on
+    // disk and acquireEvalLock reclaims it because its pid is dead.
+    const release = await acquireEvalLock(dir)
+    await release()
   })
 })

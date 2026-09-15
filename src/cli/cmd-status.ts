@@ -10,6 +10,7 @@ import { BRANCH_PREFIX, WORKTREE_DIRNAME, inferTagFromBranch } from '../state/ru
 import { readStop } from '../state/stop.js'
 import type { RunCtx } from './runctx.js'
 import { formatCumulativeSpeedup } from './speedup.js'
+import { expandSingleDashFlags } from './flags.js'
 
 const STATUSES = ['keep', 'discard', 'fail', 'crash'] as const
 
@@ -68,10 +69,11 @@ async function tryGit<T>(f: () => Promise<T>): Promise<T | null> {
 export async function cmdStatus(ctx: RunCtx, argv: readonly string[]): Promise<number> {
   let tag: string | undefined
   try {
-    const normalized = argv.map((a) => (/^-[A-Za-z][A-Za-z-]+$/.test(a) ? `-${a}` : a))
+    const options = { tag: { type: 'string' } } as const
+    const normalized = expandSingleDashFlags(argv, options)
     const { values } = parseArgs({
       args: normalized,
-      options: { tag: { type: 'string' } },
+      options,
       strict: true,
       allowPositionals: false,
     })
