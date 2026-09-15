@@ -24,6 +24,7 @@ import { writeBaseline, type BaselineRecord } from '../state/baseline.js'
 import { runDir } from '../state/home.js'
 import { BRANCH_PREFIX, CANDIDATE_WORKTREE_DIRNAME, FROZEN_DIRNAME, WORKTREE_DIRNAME } from '../state/runnaming.js'
 import type { RunCtx } from './runctx.js'
+import { expandSingleDashFlags } from './flags.js'
 
 const CHECKOUT_TIMEOUT_MS = 60_000
 
@@ -93,13 +94,14 @@ export async function cmdBaseline(ctx: RunCtx, argv: readonly string[]): Promise
   let tag: string
   let force: boolean
   try {
-    const normalized = argv.map((a) => (/^-[A-Za-z][A-Za-z-]+$/.test(a) ? `-${a}` : a))
+    const options = {
+      tag: { type: 'string' },
+      force: { type: 'boolean', default: false },
+    } as const
+    const normalized = expandSingleDashFlags(argv, options)
     const { values } = parseArgs({
       args: normalized,
-      options: {
-        tag: { type: 'string' },
-        force: { type: 'boolean', default: false },
-      },
+      options,
       strict: true,
       allowPositionals: false,
     })
