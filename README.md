@@ -18,6 +18,8 @@ paste this:
 Install and run autor3search-typescript on this repository, then optimize it.
 
 Setup:
+0. Run git status. If the working tree has changes, STOP and ask me to
+   commit or stash them first.
 1. npm install --save-dev @autor3search/typescript@^0.3.0
 2. npx autor3search-typescript init
    Show me the benchmarks it discovered. If it reports none, STOP and tell me:
